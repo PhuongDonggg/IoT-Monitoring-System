@@ -1,0 +1,24 @@
+{
+  "name": "iot-monitoring-complete",
+  "version": "1.0.0",
+  "private": true,
+  "description": "IoT Monitoring System: frontend gốc + Node.js Express API + MySQL + MQTT + Socket.IO",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "create-admin": "node scripts/create-admin.js",
+    "test": "node --test tests/*.test.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^16.4.5",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "mqtt": "^5.10.3",
+    "mysql2": "^3.14.0",
+    "socket.io": "^4.8.1"
+  }
+}
