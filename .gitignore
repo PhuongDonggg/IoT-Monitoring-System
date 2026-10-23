@@ -7,4 +7,3 @@ firmware/code/secrets.h
 firmware/secrets.h
 .DS_Store
 *.log
-postman/IoT_Monitoring_Local.postman_environment.json

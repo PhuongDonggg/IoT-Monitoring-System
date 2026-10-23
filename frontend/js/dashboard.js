@@ -63,7 +63,7 @@ function setDeviceState(card, status, busy=false) {
   card.querySelector('.processing').textContent=busy?'PENDING...':'';
   card.querySelectorAll('.device-btn').forEach(button=>{
     button.classList.toggle('active',button.dataset.action===status);
-    button.disabled=busy || status==='UNKNOWN' || !mqttConnected;
+    button.disabled=busy || status==='UNKNOWN' || !mqttConnected || button.dataset.action===status;
   });
 }
 const deviceStates = new Map([[1,'UNKNOWN'],[2,'UNKNOWN'],[3,'UNKNOWN']]);
@@ -84,23 +84,28 @@ async function loadSystem() {
   catch {mqttConnected=false;}
   for (const id of deviceStates.keys()) refreshDeviceCard(id);
 }
-function showDeviceError() {
+let deviceErrorTimer = null;
+function showDeviceError(id, action) {
   const title=document.querySelector('.device-panel .card-title');
-  title.textContent='Device Control — Command failed';
-  setTimeout(()=>{title.textContent='Device Control';},6500);
+  const name=document.querySelector(`.device-card[data-device="${id}"] .device-name`)?.textContent.trim() || `Device ${id}`;
+  title.textContent=`Device Control — ${name}: Failed to turn ${action}`;
+  clearTimeout(deviceErrorTimer);
+  deviceErrorTimer=setTimeout(()=>{title.textContent='Device Control';},6500);
 }
 document.querySelectorAll('.device-card').forEach(card=>{
   const id=Number(card.dataset.device);
   refreshDeviceCard(id);
   card.querySelectorAll('.device-btn').forEach(button=>button.addEventListener('click',async()=>{
-    if (!mqttConnected || pendingDevices.has(id)) return;
+    const action=button.dataset.action;
+    const status=deviceStates.get(id)||'UNKNOWN';
+    if (!mqttConnected || pendingDevices.has(id) || status==='UNKNOWN' || action===status) return;
     pendingDevices.add(id);refreshDeviceCard(id);
     try {
-      await iotApi.request(`/api/devices/${id}/control`,{method:'POST',body:JSON.stringify({action:button.dataset.action})});
+      await iotApi.request(`/api/devices/${id}/control`,{method:'POST',body:JSON.stringify({action})});
       // Fallback: nếu Socket.IO rớt, bỏ PENDING cục bộ và truy vấn trạng thái thực.
       setTimeout(()=>{ if(pendingDevices.has(id)){pendingDevices.delete(id);loadDevices();} },6500);
       // Kết quả thực tế chỉ được xác nhận bằng MQTT ACK hoặc API status.
-    } catch { pendingDevices.delete(id);refreshDeviceCard(id);showDeviceError(); }
+    } catch { pendingDevices.delete(id);refreshDeviceCard(id);showDeviceError(id,action); }
   }));
 });
 async function loadDashboard(){
@@ -125,7 +130,7 @@ if(liveSocket){
     if(event.status!=='PENDING'){
       pendingDevices.delete(Number(event.deviceId));
       refreshDeviceCard(Number(event.deviceId));
-      if(event.status==='FAILED')showDeviceError();
+      if(event.status==='FAILED')showDeviceError(Number(event.deviceId),event.action);
     }
   });
   liveSocket.on('system:status',event=>{mqttConnected=Boolean(event.mqttConnected);for(const id of deviceStates.keys())refreshDeviceCard(id);refreshSystemIndicator();});
