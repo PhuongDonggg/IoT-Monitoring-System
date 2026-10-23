@@ -277,7 +277,7 @@ void loop() {
 
     float h = dht.readHumidity();
     float t = dht.readTemperature();
-    int light = analogRead(LIGHT_PIN);
+    int light = 1023 - analogRead(LIGHT_PIN);
 
     if (isnan(h) || isnan(t)) {
       Serial.println("DHT11 read failed");
