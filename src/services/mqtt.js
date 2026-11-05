@@ -4,6 +4,7 @@ const {pool}=require('../db');
 const {mqtt:settings}=require('../config');
 const {parseSensorPayload,parseStatusPayload}=require('../utils/validation');
 const {displayTime,isoTime}=require('../utils/time');
+const sensors=require('../utils/sensors');
 class MqttService {
   constructor(io,control) {
     this.io=io;this.control=control;this.client=null;this.isConnected=false;this.lastSensorAt=0;
@@ -44,16 +45,32 @@ class MqttService {
       if(!d) {console.warn('Bỏ qua MQTT sensor payload không hợp lệ');return;}
       const conn=await pool.getConnection();
       let createdAt;
+      const saved={};
       try {
         await conn.beginTransaction();
+        const present=sensors.filter(s=>Object.hasOwn(d,s.key));
+        const [registry]=await conn.query('SELECT id,name FROM sensors WHERE name IN (?)',[present.map(s=>s.name)]);
+        const ids=new Map(registry.map(s=>[s.name,s.id]));
+        const values=[];
+        const placeholders=[];
         const [t]=await conn.query('SELECT UTC_TIMESTAMP(3) AS received');
         createdAt=t[0].received;
-        await conn.query('INSERT INTO sensor_data(sensor_id,value,created_at) VALUES (1,?,?),(2,?,?),(3,?,?)',[d.temperature,createdAt,d.humidity,createdAt,d.light,createdAt]);
+        for(const sensor of present) {
+          if(!ids.has(sensor.name)) {
+            console.warn(`Chưa đăng ký ${sensor.name}; chạy npm run migrate:random-sensors`);
+            continue;
+          }
+          placeholders.push('(?,?,?)');
+          values.push(ids.get(sensor.name),d[sensor.key],createdAt);
+          saved[sensor.key]=d[sensor.key];
+        }
+        if(placeholders.length) await conn.query('INSERT INTO sensor_data(sensor_id,value,created_at) VALUES '+placeholders.join(','),values);
         await conn.commit();
       } catch(e) {await conn.rollback();throw e;}
       finally {conn.release();}
+      if(!Object.keys(saved).length) return;
       this.lastSensorAt=Date.now();
-      this.io.emit('sensor:update',{...d,time:displayTime(createdAt),recordedAt:isoTime(createdAt)});
+      this.io.emit('sensor:update',{...saved,time:displayTime(createdAt),recordedAt:isoTime(createdAt)});
       this.io.emit('system:status',this.status());
     }
     if(topic==='iot/devices/status') {

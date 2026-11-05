@@ -18,6 +18,11 @@ async function main(){
   console.log('MySQL connection OK');
   const app=express();
   app.disable('x-powered-by');
+  // Sensor pages must revalidate assets and never reuse a cached API response.
+  app.use(['/api/sensor-data','/sensor-data.html','/random-sensors.html','/js/sensor-data.js','/js/random-sensors.js','/css/random-sensors.css'],(req,res,next)=>{
+    res.set('Cache-Control','no-store');
+    next();
+  });
   app.use(express.json({limit:'16kb'}));
   const server=http.createServer(app);
   const io=new Server(server,{cors:{origin:false}});

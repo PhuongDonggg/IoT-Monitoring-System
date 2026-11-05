@@ -180,7 +180,7 @@ tbody tr:not(.empty-row):hover{background:#f5fafb}
   .app-shell{display:block}
   .sidebar{width:100%;min-height:auto;padding:10px}
   .brand-icon,.brand-title,.brand-sub,.side-sep,.sidebar-bottom{display:none}
-  .nav{grid-template-columns:repeat(4,1fr);gap:4px}
+  .nav{grid-template-columns:repeat(5,1fr);gap:4px}
   .nav a{justify-content:center;flex-direction:column;gap:6px;padding:8px 2px;min-height:64px;font-size:11px;line-height:1.2;text-align:center}
   .nav-icon{display:flex}
   .page-head{gap:12px}

@@ -1,3 +1,4 @@
+const sensors = require('./sensors');
 function httpError(status, message) {
   const error = new Error(message);
   error.status = status;
@@ -27,10 +28,15 @@ function parseSensorPayload(payload) {
   let d;
   try { d = JSON.parse(payload); } catch { return null; }
   if (!d || typeof d !== 'object' || Array.isArray(d)) return null;
-  const {temperature, humidity, light} = d;
-  if (![temperature, humidity, light].every(v => typeof v === 'number' && Number.isFinite(v))) return null;
-  if (temperature < -40 || temperature > 125 || humidity < 0 || humidity > 100 || !Number.isInteger(light) || light < 0 || light > 1023) return null;
-  return {temperature, humidity, light};
+  const valid = {};
+  for (const sensor of sensors) {
+    const value = d[sensor.key];
+    // Bo qua truong thieu/sai, van xu ly nhung cam bien hop le con lai.
+    if (typeof value !== 'number' || !Number.isFinite(value)) continue;
+    if (value < sensor.min || value > sensor.max || (sensor.integer && !Number.isInteger(value))) continue;
+    valid[sensor.key] = value;
+  }
+  return Object.keys(valid).length ? valid : null;
 }
 function parseStatusPayload(payload) {
   let d;
