@@ -1,4 +1,3 @@
-
 const { pool } = require('../db');
 const { httpError } = require('../utils/validation');
 const { commandTimeoutMs } = require('../config');
@@ -7,9 +6,9 @@ class ControlService {
   constructor(io) {
     this.io = io;
     this.mqtt = null;
-    this.busy = new Set();
-    this.pending = new Map();
-    this.cooldownUntil = new Map();
+    this.busy = new Set(); // Khóa cả thời gian đang chờ tạo lịch sử trong SQL.
+    this.pending = new Map(); // Lệnh đã tạo, kèm timer và cờ chống chốt hai lần.
+    this.cooldownUntil = new Map(); // Thời điểm được gửi lệnh tiếp theo sau FAILED.
   }
 
   setMqtt(service) {
@@ -17,18 +16,16 @@ class ControlService {
   }
 
   async initialize() {
-    // Danh dau cac lenh cu chua xac nhan la FAILED
+    // Lệnh chưa xác nhận trước khi backend khởi động lại được đánh dấu FAILED.
     await pool.query(
-      "UPDATE action_history " +
-      "SET status='FAILED', " +
-      "error_reason='Backend restarted before receiving confirmation', " +
-      "finished_at=UTC_TIMESTAMP(3) " +
-      "WHERE status='PENDING'"
+      `UPDATE action_history
+       SET status='FAILED',
+           error_reason='Backend restarted before receiving confirmation',
+           finished_at=UTC_TIMESTAMP(3)
+       WHERE status='PENDING'`
     );
 
-    // GIU NGUYEN trang thai thiet bi trong MySQL
-    // Khong reset ve UNKNOWN khi backend khoi dong lai.
-    // ESP8266 se gui lai trang thai khi ket noi MQTT.
+    // Giữ devices.status cũ; ESP8266 gửi lại trạng thái khi kết nối MQTT.
   }
 
   async create(userId, id, action) {
@@ -41,22 +38,14 @@ class ControlService {
     }
 
     if (this.busy.has(id)) {
-      throw httpError(
-        409,
-        'Thiết bị đang có lệnh chưa hoàn tất'
-      );
+      throw httpError(409, 'Thiết bị đang có lệnh chưa hoàn tất');
     }
 
-    if (
-      Date.now() <
-      (this.cooldownUntil.get(id) || 0)
-    ) {
-      throw httpError(
-        409,
-        'Thiết bị đang trong thời gian chờ sau timeout'
-      );
+    if (Date.now() < (this.cooldownUntil.get(id) || 0)) {
+      throw httpError(409, 'Thiết bị đang trong thời gian chờ sau timeout');
     }
 
+    // Khóa trước khi chờ SQL để hai request không cùng tạo lệnh cho một thiết bị.
     this.busy.add(id);
 
     let rowId;
@@ -72,9 +61,8 @@ class ControlService {
       }
 
       const [result] = await pool.execute(
-        "INSERT INTO action_history " +
-        "(user_id,device_id,action,status,created_at) " +
-        "VALUES (?,?,?,'PENDING',UTC_TIMESTAMP(3))",
+        `INSERT INTO action_history (user_id,device_id,action,status,created_at)
+         VALUES (?,?,?,'PENDING',UTC_TIMESTAMP(3))`,
         [userId, id, action]
       );
 
@@ -107,17 +95,10 @@ class ControlService {
 
       try {
         await this.mqtt.publishCommand(id, action);
-      } catch (err) {
-        await this.finish(
-          entry,
-          'FAILED',
-          'MQTT publish failed'
-        );
+      } catch {
+        await this.finish(entry, 'FAILED', 'MQTT publish failed');
 
-        throw httpError(
-          503,
-          'Không gửi được lệnh tới MQTT Broker'
-        );
+        throw httpError(503, 'Không gửi được lệnh tới MQTT Broker');
       }
 
       return {
@@ -127,13 +108,8 @@ class ControlService {
         status: 'PENDING',
         timeoutSeconds: commandTimeoutMs / 1000
       };
-
     } catch (err) {
-      if (rowId && !this.pending.has(id)) {
-        this.busy.delete(id);
-      }
-
-      if (!rowId) {
+      if (!rowId || !this.pending.has(id)) {
         this.busy.delete(id);
       }
 
@@ -164,15 +140,15 @@ class ControlService {
       return;
     }
 
+    // ACK và timeout có thể đến gần nhau; mỗi lệnh chỉ được chốt một lần.
     entry.settled = true;
     clearTimeout(entry.timer);
 
     try {
       await pool.execute(
-        "UPDATE action_history " +
-        "SET status=?,error_reason=?, " +
-        "finished_at=UTC_TIMESTAMP(3) " +
-        "WHERE id=? AND status='PENDING'",
+        `UPDATE action_history
+         SET status=?,error_reason=?,finished_at=UTC_TIMESTAMP(3)
+         WHERE id=? AND status='PENDING'`,
         [status, reason, entry.id]
       );
 
@@ -183,23 +159,15 @@ class ControlService {
         status,
         errorReason: reason
       });
-
     } catch (err) {
-      console.error(
-        'Không cập nhật được action_history:',
-        err.message
-      );
-
+      console.error('Không cập nhật được action_history:', err.message);
     } finally {
       if (this.pending.get(entry.deviceId) === entry) {
         this.pending.delete(entry.deviceId);
       }
 
       if (status === 'FAILED') {
-        this.cooldownUntil.set(
-          entry.deviceId,
-          Date.now() + 5000
-        );
+        this.cooldownUntil.set(entry.deviceId, Date.now() + 5000);
       }
 
       this.busy.delete(entry.deviceId);

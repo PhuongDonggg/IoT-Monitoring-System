@@ -1,1 +1,0 @@
-setActivePage('profile');

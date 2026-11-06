@@ -5,7 +5,7 @@
 #include <Schedule.h>
 #include "secrets.h"
 
-// GIU NGUYEN CHAN KET NOI
+// Giữ nguyên chân thiết bị và LED cảnh báo.
 #define DEVICE1_PIN D1
 #define DEVICE2_PIN D2
 #define DEVICE3_PIN D3
@@ -28,14 +28,14 @@ unsigned long lastMqttAttempt = 0;
 const unsigned long SAMPLE_INTERVAL = 2000;
 const unsigned long BLINK_INTERVAL = 500;
 
-// Khai bao kieu truoc ham dau tien de Arduino tao prototype dung thu tu.
+// Khai báo kiểu trước hàm đầu tiên để Arduino tạo prototype đúng thứ tự.
 struct StoredState {
   uint32_t magic;
   uint8_t state[3];
   uint8_t check;
 };
 
-// Chi xu ly random/GPIO: khong MQTT, DHT, delay hay cap phat bo nho.
+// Chỉ xử lý random/GPIO, không chờ mạng hoặc đọc DHT trong tác vụ này.
 void serviceRandomSensors() {
   const unsigned long now = millis();
   if (now - lastRandomAt >= SAMPLE_INTERVAL) {
@@ -54,7 +54,9 @@ void serviceRandomSensors() {
     } else {
       const unsigned long steps = (now - warningChangedAt[i]) / BLINK_INTERVAL;
       if (steps > 0) {
-        if (steps % 2 != 0) warningOn[i] = !warningOn[i];
+        if (steps % 2 != 0) {
+          warningOn[i] = !warningOn[i];
+        }
         warningChangedAt[i] += steps * BLINK_INTERVAL;
       }
     }
@@ -63,8 +65,7 @@ void serviceRandomSensors() {
   }
 }
 
-// PubSubClient cho CONNACK bang available() trong mot vong lap dong bo.
-// Cho ESP8266 xu ly WiFi va cac tac vu millis trong luc doi broker.
+// Tiếp tục cập nhật LED khi PubSubClient chờ CONNACK từ broker.
 class ResponsiveWiFiClient : public WiFiClient {
  public:
   int available() override {
@@ -74,7 +75,6 @@ class ResponsiveWiFiClient : public WiFiClient {
   }
 };
 
-// MQTT
 const int mqtt_port = 2005;
 const char* TOPIC_SENSOR = "iot/sensors/data";
 const char* TOPIC_COMMAND = "iot/devices/command";
@@ -91,50 +91,49 @@ const uint8_t devicePins[3] = {
 uint8_t deviceState[3] = {0, 0, 0};
 unsigned long lastMsg = 0;
 
-// LUU TRANG THAI VAO FLASH
 const uint32_t STATE_MAGIC = 0x494F5431UL;
 const int EEPROM_SIZE = 64;
 
-uint8_t stateCheck(const StoredState& s) {
+uint8_t stateCheck(const StoredState& stored) {
   return (uint8_t)(
-    0xA5 ^ s.state[0] ^
-    (s.state[1] << 1) ^
-    (s.state[2] << 2)
+    0xA5 ^ stored.state[0] ^
+    (stored.state[1] << 1) ^
+    (stored.state[2] << 2)
   );
 }
 
-// GHI TRANG THAI VAO FLASH
+// Chỉ xác nhận lệnh sau khi lưu trạng thái thành công.
 bool writeStatesToFlash(const uint8_t values[3]) {
-  StoredState s;
-  s.magic = STATE_MAGIC;
+  StoredState stored;
+  stored.magic = STATE_MAGIC;
 
   for (int i = 0; i < 3; i++) {
-    s.state[i] = values[i];
+    stored.state[i] = values[i];
   }
 
-  s.check = stateCheck(s);
-  EEPROM.put(0, s);
+  stored.check = stateCheck(stored);
+  EEPROM.put(0, stored);
 
   return EEPROM.commit();
 }
 
-// KHOI PHUC TRANG THAI SAU KHI MAT NGUON
+// Khôi phục ON/OFF từ Flash sau khi mất nguồn.
 void restoreStatesFromFlash() {
   EEPROM.begin(EEPROM_SIZE);
 
-  StoredState s;
-  EEPROM.get(0, s);
+  StoredState stored;
+  EEPROM.get(0, stored);
 
   bool valid = (
-    s.magic == STATE_MAGIC &&
-    s.state[0] <= 1 &&
-    s.state[1] <= 1 &&
-    s.state[2] <= 1 &&
-    s.check == stateCheck(s)
+    stored.magic == STATE_MAGIC &&
+    stored.state[0] <= 1 &&
+    stored.state[1] <= 1 &&
+    stored.state[2] <= 1 &&
+    stored.check == stateCheck(stored)
   );
 
   for (int i = 0; i < 3; i++) {
-    deviceState[i] = valid ? s.state[i] : 0;
+    deviceState[i] = valid ? stored.state[i] : 0;
 
     digitalWrite(
       devicePins[i],
@@ -149,7 +148,6 @@ void restoreStatesFromFlash() {
   }
 }
 
-// KET NOI WIFI
 void setup_wifi() {
   Serial.print("Connecting to WiFi: ");
   Serial.println(ssid);
@@ -158,7 +156,7 @@ void setup_wifi() {
   lastWifiAttempt = millis();
 }
 
-// GUI TRANG THAI THIET BI QUA MQTT
+// Backend dùng bản tin này để xác nhận trạng thái thiết bị.
 void publishDeviceState(int id) {
   String payload =
     "{\"device\":" + String(id) +
@@ -175,7 +173,7 @@ void publishDeviceState(int id) {
   }
 }
 
-// DONG BO 3 THIET BI KHI MQTT KET NOI
+// Gửi lại cả ba trạng thái sau mỗi lần MQTT kết nối.
 void publishAllDeviceStates() {
   for (int id = 1; id <= 3; id++) {
     publishDeviceState(id);
@@ -183,7 +181,6 @@ void publishAllDeviceStates() {
   }
 }
 
-// NHAN LENH DIEU KHIEN
 void callback(
   char* topic,
   byte* payload,
@@ -204,7 +201,7 @@ void callback(
     message += (char)payload[i];
   }
 
-  // Dinh dang: 1:ON, 2:OFF, 3:ON...
+  // Định dạng lệnh: 1:ON, 2:OFF, 3:ON...
   if (
     message.length() < 4 ||
     message.charAt(1) != ':' ||
@@ -225,7 +222,7 @@ void callback(
   int id = message.charAt(0) - '0';
   uint8_t newValue = (action == "ON") ? 1 : 0;
 
-  // CHI GHI FLASH KHI TRANG THAI THAY DOI
+  // Chỉ ghi Flash khi ON/OFF thay đổi để hạn chế số lần ghi.
   if (deviceState[id - 1] != newValue) {
     uint8_t nextStates[3] = {
       deviceState[0],
@@ -243,13 +240,11 @@ void callback(
     deviceState[id - 1] = newValue;
   }
 
-  // THUC HIEN LENH
   digitalWrite(
     devicePins[id - 1],
     newValue ? HIGH : LOW
   );
 
-  // PHAN HOI TRANG THAI THUC TE
   publishDeviceState(id);
 
   Serial.println(
@@ -257,7 +252,6 @@ void callback(
   );
 }
 
-// KET NOI LAI MQTT
 void reconnect() {
   const unsigned long now = millis();
   if (WiFi.status() != WL_CONNECTED) {
@@ -281,7 +275,6 @@ void reconnect() {
 
       client.subscribe(TOPIC_COMMAND);
 
-      // GUI TRANG THAI DA KHOI PHUC
       publishAllDeviceStates();
 
     } else {
@@ -291,7 +284,37 @@ void reconnect() {
   }
 }
 
-// SETUP
+// Đọc DHT lỗi vẫn gửi Light và ba cảm biến random.
+void publishSensorData() {
+  float humidityValue = dht.readHumidity();
+  float temperatureValue = dht.readTemperature();
+  int light = 1023 - analogRead(LIGHT_PIN);
+
+  char temperature[32] = "";
+  char humidity[32] = "";
+  if (!isnan(temperatureValue)) {
+    snprintf(temperature, sizeof(temperature), ",\"temperature\":%.2f", temperatureValue);
+  }
+  if (!isnan(humidityValue)) {
+    snprintf(humidity, sizeof(humidity), ",\"humidity\":%.2f", humidityValue);
+  }
+  if (isnan(humidityValue) || isnan(temperatureValue)) {
+    Serial.println("DHT11 read failed; publishing other sensors");
+  }
+
+  char payload[192];
+  const int length = snprintf(payload, sizeof(payload),
+    "{\"light\":%d,\"sensor4\":%d,\"sensor5\":%d,\"sensor6\":%d%s%s}",
+    light, randomValues[0], randomValues[1], randomValues[2], temperature, humidity);
+  if (length < 0 || (size_t)length >= sizeof(payload)) {
+    Serial.println("Sensor payload buffer too small");
+  } else if (client.connected() && client.publish(TOPIC_SENSOR, payload)) {
+    Serial.println(payload);
+  } else {
+    Serial.println("Sensor MQTT publish failed");
+  }
+}
+
 void setup() {
   Serial.begin(115200);
 
@@ -305,8 +328,7 @@ void setup() {
   randomSeed(ESP.getCycleCount() ^ micros());
   lastRandomAt = millis() - SAMPLE_INTERVAL;
   serviceRandomSensors();
-  // Core ESP8266 da co san Schedule.h. TCP/DNS cho mang se yield(),
-  // nen random va LED van cap nhat khi cac ham ket noi dang doi.
+  // TCP/DNS có yield(): tác vụ nền tiếp tục cập nhật LED lúc chờ mạng.
   if (!schedule_recurrent_function_us([]() {
     serviceRandomSensors();
     return true;
@@ -314,7 +336,6 @@ void setup() {
     Serial.println("Cannot schedule background warning service");
   }
 
-  // LAY TRANG THAI CU TU FLASH
   restoreStatesFromFlash();
 
   dht.begin();
@@ -323,46 +344,29 @@ void setup() {
   client.setServer(mqtt_server, mqtt_port);
   client.setCallback(callback);
   client.setSocketTimeout(1);
-  if (!client.setBufferSize(384)) Serial.println("Cannot resize MQTT buffer");
+  if (!client.setBufferSize(384)) {
+    Serial.println("Cannot resize MQTT buffer");
+  }
   lastMqttAttempt = millis() - 5000UL;
 }
 
-// LOOP
 void loop() {
   serviceRandomSensors();
   if (!client.connected()) {
     reconnect();
   }
 
-  if (WiFi.status() == WL_CONNECTED && client.connected()) client.loop();
+  if (WiFi.status() == WL_CONNECTED && client.connected()) {
+    client.loop();
+  }
 
   unsigned long now = millis();
 
-  // GUI DU LIEU CAM BIEN MOI 2 GIAY
+  // Giữ chu kỳ gửi dữ liệu 2 giây, độc lập với nhấp nháy LED.
   if (now - lastMsg >= SAMPLE_INTERVAL) {
     lastMsg = now;
 
-    float h = dht.readHumidity();
-    float t = dht.readTemperature();
-    int light = 1023 - analogRead(LIGHT_PIN);
-
-    char temperature[32] = "";
-    char humidity[32] = "";
-    if (!isnan(t)) snprintf(temperature, sizeof(temperature), ",\"temperature\":%.2f", t);
-    if (!isnan(h)) snprintf(humidity, sizeof(humidity), ",\"humidity\":%.2f", h);
-    if (isnan(h) || isnan(t)) Serial.println("DHT11 read failed; publishing other sensors");
-
-    char payload[192];
-    const int length = snprintf(payload, sizeof(payload),
-      "{\"light\":%d,\"sensor4\":%d,\"sensor5\":%d,\"sensor6\":%d%s%s}",
-      light, randomValues[0], randomValues[1], randomValues[2], temperature, humidity);
-    if (length < 0 || (size_t)length >= sizeof(payload)) {
-      Serial.println("Sensor payload buffer too small");
-    } else if (client.connected() && client.publish(TOPIC_SENSOR, payload)) {
-      Serial.println(payload);
-    } else {
-      Serial.println("Sensor MQTT publish failed");
-    }
+    publishSensorData();
   }
   serviceRandomSensors();
 }
