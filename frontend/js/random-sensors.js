@@ -18,17 +18,10 @@ randomGrid.innerHTML = randomDefinitions.map(sensor => `
   <article class="card random-card offline" id="${sensor.key}Card" aria-labelledby="${sensor.key}Name">
     <div class="random-card-head"><h2 id="${sensor.key}Name">${sensor.name}</h2><span class="random-state">OFFLINE</span></div>
     <div class="random-value">--</div><div class="random-range">Range 0–${sensor.max} · Warning &gt; ${sensor.threshold}</div>
-    <div class="random-meter-label"><span>Percentage of maximum</span><strong class="random-percent">--%</strong></div>
-    <progress max="100" value="0" aria-label="${sensor.name} percentage"></progress>
-    <div class="random-updated">No sensor data received</div>
   </article>`).join('');
 
 function randomIsValid(value, sensor) {
   return Number.isInteger(value) && value >= 0 && value <= sensor.max;
-}
-
-function randomLiveEnabled() {
-  return document.getElementById('randomLive').checked;
 }
 
 function randomSensorState(point, sensor, online) {
@@ -49,16 +42,10 @@ function randomRender() {
   randomDefinitions.forEach(sensor => {
     const card = document.getElementById(sensor.key + 'Card');
     const point = randomLatest[sensor.key];
-    const percentage = point ? point.value / sensor.max * 100 : null;
     const state = randomSensorState(point, sensor, online);
     card.className = 'card random-card ' + state.toLowerCase();
     card.querySelector('.random-state').textContent = state;
     card.querySelector('.random-value').textContent = point ? String(point.value) : '--';
-    card.querySelector('.random-percent').textContent = percentage === null ? '--%' : percentage.toFixed(1) + '%';
-    card.querySelector('progress').value = percentage ?? 0;
-    card.querySelector('.random-updated').textContent = point
-      ? 'Last received: ' + (point.time || point.recordedAt)
-      : 'No sensor data received';
   });
 }
 
@@ -70,10 +57,7 @@ function randomApplyCurrent(data) {
     if (previous && Date.parse(previous.recordedAt) > Date.parse(recordedAt)) return;
     randomLatest[sensor.key] = {
       value: data[sensor.key],
-      recordedAt,
-      time: data.sensorRecordedAt
-        ? new Date(recordedAt).toLocaleString('en-GB', { timeZone: 'Asia/Ho_Chi_Minh' })
-        : data.time
+      recordedAt
     };
   });
   randomRender();
@@ -86,7 +70,7 @@ function randomMergePoints(key, points) {
   for (const point of [...randomSeries[key], ...points]) {
     if (randomIsValid(point.value, sensor) && Number.isFinite(Date.parse(point.recordedAt))) {
       const recordedAt = new Date(point.recordedAt).toISOString();
-      byTime.set(recordedAt, { ...point, recordedAt });
+      byTime.set(recordedAt, { value: point.value, recordedAt });
     }
   }
   randomSeries[key] = [...byTime.values()]
@@ -98,9 +82,7 @@ function randomDrawChart() {
   if (!randomChart) return;
   const times = [...new Set(Object.values(randomSeries).flatMap(series => series.map(point => point.recordedAt)))]
     .sort().slice(-randomChartLimit);
-  randomChart.data.labels = times.map(time => new Date(time).toLocaleTimeString('en-GB', {
-    timeZone: 'Asia/Ho_Chi_Minh', hour12: false
-  }));
+  randomChart.data.labels = times;
   randomDefinitions.forEach((sensor, index) => {
     const values = new Map(randomSeries[sensor.key].map(point => [point.recordedAt, point.value]));
     const dataset = randomChart.data.datasets[index];
@@ -145,7 +127,7 @@ function randomMakeChart() {
           title: { display: true, text: 'Percentage of maximum (%)' },
           ticks: { callback: value => value + '%' }
         },
-        x: { ticks: { maxTicksLimit: 8, maxRotation: 0 } }
+        x: { ticks: { display: false } }
       }
     }
   });
@@ -155,7 +137,7 @@ async function randomLoadHistory() {
   const requestId = ++historyRequestId;
   try {
     const data = await iotApi.request('/api/sensor-data/chart?limit=' + randomChartLimit);
-    if (requestId !== historyRequestId || !randomLiveEnabled()) return;
+    if (requestId !== historyRequestId) return;
     randomDefinitions.forEach(sensor => randomMergePoints(sensor.key, data[sensor.key] || []));
     randomDrawChart();
     if (randomChart) document.getElementById('randomError').textContent = '';
@@ -188,11 +170,6 @@ async function randomLoadSystem() {
   randomRender();
 }
 
-document.getElementById('randomLive').onchange = () => {
-  // Hủy hiệu lực snapshot đang chờ để tắt Live cũng chặn phản hồi REST đến muộn.
-  ++historyRequestId;
-  if (randomLiveEnabled()) randomLoadHistory();
-};
 randomMakeChart();
 randomRender();
 randomLoadHistory();
@@ -203,10 +180,9 @@ if (randomSocket) {
   randomSocket.on('sensor:update', data => {
     randomBackendReachable = true;
     randomApplyCurrent(data);
-    if (!randomLiveEnabled()) return;
     randomDefinitions.forEach(sensor => {
       if (randomIsValid(data[sensor.key], sensor)) {
-        randomMergePoints(sensor.key, [{ value: data[sensor.key], recordedAt: data.recordedAt, time: data.time }]);
+        randomMergePoints(sensor.key, [{ value: data[sensor.key], recordedAt: data.recordedAt }]);
       }
     });
     randomDrawChart();
@@ -220,7 +196,7 @@ if (randomSocket) {
   randomSocket.on('connect', () => {
     randomLoadSystem();
     randomLoadLatest();
-    if (randomLiveEnabled()) randomLoadHistory();
+    randomLoadHistory();
   });
   const disconnected = () => {
     ++systemRequestId;
@@ -234,5 +210,5 @@ setInterval(randomRender, 1000);
 setInterval(() => {
   randomLoadSystem();
   randomLoadLatest();
-  if (!randomSocket?.connected && randomLiveEnabled()) randomLoadHistory();
+  if (!randomSocket?.connected) randomLoadHistory();
 }, 5000);

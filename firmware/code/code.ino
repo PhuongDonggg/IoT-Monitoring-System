@@ -44,6 +44,7 @@ void serviceRandomSensors() {
     randomValues[1] = random(0, 102);
     randomValues[2] = random(0, 1002);
   }
+  // So sánh giá trị với ngưỡng cảnh báo, quyết định bật, tắt hay nháy LED
   for (int i = 0; i < 3; i++) {
     const bool active = randomValues[i] > warningThresholds[i];
     if (!active) {
@@ -314,7 +315,7 @@ void publishSensorData() {
     Serial.println("Sensor MQTT publish failed");
   }
 }
-
+// Chương trình bắt đầu chạy từ setup() 
 void setup() {
   Serial.begin(115200);
 
